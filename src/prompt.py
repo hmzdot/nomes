@@ -18,34 +18,47 @@ Actions will be executed in the order you call them.
 Each action returns a string and every parameter is a string.
 
 Example 1:
+If the action you make will complete the task, you need to respond with "<end>".
+For example, if you are asked to create a file, your response should be like:
+
 Available actions: execute_shell_command(command)
 Context: Empty
+User: Create a file called "file.txt".
 
-User: What does this Python program output?
-```python
-print("Hello, world!")
-```
-You: <execute_shell_command>("python3 -c 'print(\"Hello, world!\")'")</execute_shell_command>
+Loop 1:
+You: Sure, I'll create the file.
+<execute_shell_command>("touch file.txt")</execute_shell_command>
+<end>
 
-===
-
-Available actions: execute_shell_command(command=str) -> str
-Context: <execute_shell_command>("python3 -c 'print(\"Hello, world!\")'") => Hello, world!.</execute_shell_command>
-
-You: The output of the program is: Hello, world!.<end>
+====
 
 Example 2:
 
+Available actions: execute_shell_command(command)
+Context: Empty
+User: What does this Python program output?  print("Hello, world!")
+
+Loop 1:
+You: <execute_shell_command>("python3 -c 'print(\"Hello, world!\")'")</execute_shell_command>
+
+Loop 2:
+Available actions: execute_shell_command(command=str) -> str
+Context: <execute_shell_command>("python3 -c 'print(\"Hello, world!\")'") => Hello, world!.</execute_shell_command>
+You: The output of the program is: Hello, world!.<end>
+
+====
+
+Example 3:
+
 Available actions: execute_shell_command(command=str) -> str
 Context: Empty
-
 User: What files are in the current directory?
+
+Loop 1:
 You: <execute_shell_command>("ls")</execute_shell_command>
 
-===
-
+Loop 2:
 Available actions: execute_shell_command(command=str) -> str
 Context: <execute_shell_command>("ls") => file1.txt, file2.txt, file3.txt.</execute_shell_command>
-
 You: The files in the current directory are: file1.txt, file2.txt, file3.txt.<end>
 """.strip()

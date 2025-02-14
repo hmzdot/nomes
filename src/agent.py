@@ -1,6 +1,9 @@
 import openai
 from prompt import SYSTEM_MESSAGE
 from action import Action
+from logger import Logger
+import re
+import codecs
 
 OpenAI = openai.OpenAI()
 
@@ -15,7 +18,7 @@ class ActionCall:
         return ",".join(f"{k}={v}" for k, v in zip(self.params, self.args))
 
     def __repr__(self):
-        return f"ActionCall(name={self.name}, params={self.params_str()})"
+        return f"{self.name}({self.params_str()})"
 
 
 class ModelResponse:
@@ -27,7 +30,7 @@ class ModelResponse:
         self.completed = completed
 
     def __repr__(self):
-        return f"ModelResponse(text={self.text}, action_calls={self.action_calls}, completed={self.completed})"
+        return f"ModelResponse:\n{self.text}\nCalls: {self.action_calls}\nCompleted: {self.completed}"
 
 
 class Agent:
@@ -36,6 +39,7 @@ class Agent:
     call_depth: int
     max_call_depth: int
     actions: dict[str, Action]
+    logger: Logger
 
     def __init__(self, actions: list[Action] = [], max_call_depth: int = 10):
         self.messages = []
@@ -43,46 +47,43 @@ class Agent:
         self.call_depth = 0
         self.max_call_depth = max_call_depth
         self.actions = {action.name: action for action in actions}
+        self.logger = Logger()
 
     def _parse_response(self, prompt: str) -> ModelResponse:
-        """Extracts the text and action calls from the LLM response."""
-        # Initialize variables
-        text = []
+        """Extracts the text and action calls from the LLM response using regex."""
+        # Check for <end> tag and remove it
+        finished = bool(re.search(r"<end>", prompt))
+        prompt = re.sub(r"<end>", "", prompt)
+
+        # Find and process action calls
         action_calls = []
-        finished = False
 
-        # Split the response into lines for easier processing
-        lines = prompt.strip().split("\n")
+        def process_action(match):
+            action_name = match.group(1)
+            args_str = match.group(2)
 
-        for line in lines:
-            if "<end>" in line:
-                finished = True
-                line = line.replace("<end>", "")
+            # Extract quoted arguments, handling escaped quotes
+            args = []
+            pattern = r'"((?:[^"\\]|\\.)*)"'
+            for arg_match in re.finditer(pattern, args_str):
+                # De-escape the captured argument
+                arg = codecs.decode(arg_match.group(1), "unicode_escape")
+                args.append(arg)
 
-            # Check for action calls using the format <action_name>(params)</action_name>
-            if line.strip().startswith("<") and ">" in line and "</" in line:
-                start_tag = line.index(">") + 1
-                end_tag = line.index("</")
-                action_content = line[start_tag:end_tag].strip()
-
-                # Extract action name and parameters
-                action_name = line[1 : line.index(">")].strip()
-                action = self.actions.get(action_name)
-                if action is None:
-                    print(f"Action {action_name} not found")
-                    continue
-
-                args_str = action_content[
-                    action_content.index("(") + 1 : action_content.rindex(")")
-                ]
-                args = [param.strip() for param in args_str.split(",") if param.strip()]
-
+            action = self.actions.get(action_name)
+            if action:
                 action_calls.append(ActionCall(action_name, action.parameters, args))
-            else:
-                text.append(line)
+            return ""  # Remove the action call from the text
+
+        # Pattern matches <action_name>("arg1", "arg2", ...)</action_name>
+        action_pattern = r"<(\w+)>\(([^)]+)\)</\1>"
+        text = re.sub(action_pattern, process_action, prompt)
+
+        # Clean up any remaining whitespace/empty lines
+        text = "\n".join(line for line in text.split("\n") if line.strip())
 
         return ModelResponse(
-            text="\n".join(text).strip(),
+            text=text.strip(),
             action_calls=action_calls,
             completed=finished,
         )
@@ -133,15 +134,17 @@ class Agent:
             ],
         )
         response = response.choices[0].message.content
+        self.logger.log(response)
         return self._parse_response(response)
 
     def query(self, prompt: str) -> str:
         while self.call_depth < self.max_call_depth:
+            self.logger.log(f"Call depth: {self.call_depth}")
             context = self._make_context()
-            response = self._make_llm_request(context, prompt)
+            self.logger.log(context)
 
-            if response.completed:
-                return response.text
+            response = self._make_llm_request(context, prompt)
+            self.logger.log(response.__repr__())
 
             for action_call in response.action_calls:
                 action_name = action_call.name
@@ -159,6 +162,10 @@ class Agent:
             self.messages.append(f"User: {prompt}")
             if len(response.text) > 0:
                 self.messages.append(f"You: {response.text}")
+
+            if response.completed:
+                return response.text
+
             self.call_depth += 1
 
         return "Max call depth reached"
