@@ -2,6 +2,26 @@
 
 AI agents from first principles
 
+## Build and Run
+
+⚠️ **WARNING**: This agent has full shell access and can execute arbitrary commands. Only run it in a controlled environment with appropriate security measures. Never expose it directly to untrusted input or public networks.
+
+With `uv` installed:
+
+```bash
+git clone git@github.com:hmzdot/nomes.git
+cd nomes
+
+# Install dependencies
+uv sync
+
+# Set OpenAI API Key
+export OPENAI_API_KEY=sk-proj-xxx
+
+# Run the agent
+uv run src/main.py "Your prompt here"
+```
+
 ## Input/Output Format
 
 ### Input
