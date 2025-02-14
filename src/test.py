@@ -1,17 +1,18 @@
-from main import Session, ActionCall
+from action import ExecuteShellCommand
+from main import Agent, ActionCall
 from prompt import SYSTEM_MESSAGE
 
 
 def test_parse_response():
     print("Only <end> in the response:")
-    print(Session()._parse_response("<end>"))
+    print(Agent()._parse_response("<end>"))
 
     print("Only text in the response:")
-    print(Session()._parse_response("Hello, how are you?"))
+    print(Agent()._parse_response("Hello, how are you?"))
 
     print("Text and action call in the response:")
     print(
-        Session()._parse_response(
+        Agent()._parse_response(
             """
             <action_name>(param1, param2) => result</action_name>
             """.strip()
@@ -20,7 +21,7 @@ def test_parse_response():
 
     print("Text and action call in the response:")
     print(
-        Session()._parse_response(
+        Agent()._parse_response(
             """
             <action_name>(param1, param2) => result</action_name>
             Hello, how are you?
@@ -31,15 +32,15 @@ def test_parse_response():
 
 def test_make_context():
     print("Empty context:")
-    print(Session()._make_context())
+    print(Agent()._make_context())
 
     print("Context with one message:")
-    session = Session()
+    session = Agent()
     session.messages.append("Hello, how are you?")
     print(session._make_context())
 
     print("Context with one message and one action call:")
-    session = Session()
+    session = Agent()
     session.messages.append("Hello, how are you?")
     session.call_results.append(
         (ActionCall("execute_shell_command", ["command"], ["ls"]), "result")
@@ -48,7 +49,7 @@ def test_make_context():
 
 
 def test_prepare_llm_request():
-    session = Session()
+    session = Agent()
     session.messages.append("Hello, how are you?")
     session.call_results.append(
         (ActionCall("execute_shell_command", ["command"], ["ls"]), "result")
@@ -65,8 +66,13 @@ def test_prepare_llm_request():
     )
 
 
+def test_execute_shell_command():
+    print(ExecuteShellCommand().execute("ls"))
+
+
 if __name__ == "__main__":
     # test_parse_response()
     # test_make_context()
     # test_prepare_llm_request()
-    pass
+    test_execute_shell_command()
+    print("OK")
