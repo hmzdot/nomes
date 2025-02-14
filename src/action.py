@@ -27,9 +27,20 @@ class ExecuteShellCommand(Action):
     def execute(self, command: str) -> str:
         super().execute(command)
         result = subprocess.run(command, shell=True, capture_output=True, text=True)
-        return f"(Return Code: {result.returncode}) {result.stdout}"
+        status = "Success" if result.returncode == 0 else "Failed"
+        return f"{status}({result.returncode}): {result.stdout}"
 
 
-ACTIONS = {
-    "execute_shell_command": ExecuteShellCommand(),
-}
+class WriteFile(Action):
+    def __init__(self):
+        super().__init__(
+            name="write_file",
+            description="Write multiline text to a file",
+            parameters=["file_path", "content"],
+        )
+
+    def execute(self, file_path: str, content: str) -> str:
+        super().execute(file_path, content)
+        with open(file_path, "w") as file:
+            bytes_written = file.write(content)
+        return f"{bytes_written} bytes written to {file_path}"

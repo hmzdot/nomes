@@ -2,7 +2,7 @@ import openai
 from prompt import SYSTEM_MESSAGE
 from action import Action
 from logger import Logger
-import re
+import json
 import codecs
 
 OpenAI = openai.OpenAI()
@@ -50,114 +50,60 @@ class Agent:
         self.logger = Logger()
 
     def _parse_response(self, input_str: str) -> ModelResponse:
-        """
-        Parses a string to extract the plain text, a list of action calls, and a finished flag.
+        input_str = input_str.replace("```json", "").replace("```", "")
+        input_str = json.loads(input_str)
 
-        Action calls are in the format:
-            <action_name>(arg1, arg2, ...)</action_name>
+        text: str = input_str["text"]
+        action_calls: list[dict] = input_str["action_calls"]
+        completed: bool = input_str["completed"]
 
-        A tag <end> indicates that the finished flag should be True.
-        """
         actions = []
-        # Regex pattern to match <action_name>(parameters)</action_name>
-        pattern = re.compile(r"<(\w+)>\((.*?)\)</\1>", re.DOTALL)
+        for action_call in action_calls:
+            action_name = action_call["name"]
+            args = action_call["args"]
+            args = [codecs.decode(arg, "unicode_escape") for arg in args]
 
-        # Find and parse all action calls.
-        for match in pattern.finditer(input_str):
-            action_name = match.group(1)
-            args_str = match.group(2).strip()
-            args = []
-            if args_str:
-
-                def find_char_pos(char: str, start_pos: int) -> int:
-                    """Find the position of a character in a string, skipping escape characters."""
-                    pos = start_pos
-                    while pos < len(args_str):
-                        if args_str[pos] == "\\":
-                            pos += 2
-                        elif args_str[pos] == char:
-                            return pos
-                        pos += 1
-                    return -1
-
-                pos = 0
-                while pos < len(args_str):
-                    start_pos = find_char_pos('"', pos)
-                    end_pos = find_char_pos('"', start_pos + 1)
-                    args_str = args_str[start_pos + 1 : end_pos]
-                    args.extend([arg.strip('"') for arg in args_str.split('", "')])
-                    pos = end_pos + 1
-
-            for arg in args:
-                # De-escape the argument using codecs.decode
-                arg = codecs.decode(arg, "unicode_escape")
-
-            action = self.actions.get(action_name)
-            if action is None:
+            available_action = self.actions.get(action_name)
+            if available_action is None:
                 print(f"Action {action_name} not found")
                 continue
-
-            actions.append(ActionCall(action_name, action.parameters, args))
-
-        # Remove all action call tags from the text.
-        text_without_actions = pattern.sub("", input_str)
-
-        # Check for the <end> tag.
-        finished = "<end>" in text_without_actions
-        text_without_actions = text_without_actions.replace("<end>", "")
-
-        # Clean up any extra whitespace.
-        text_without_actions = text_without_actions.strip()
+            actions.append(ActionCall(action_name, available_action.parameters, args))
 
         return ModelResponse(
-            text=text_without_actions,
+            text=text,
             action_calls=actions,
-            completed=finished,
+            completed=completed,
         )
 
-    def _make_action_list(self) -> str:
-        """Make a list of actions that the LLM can call."""
-        actions = "Available actions:\n"
-        for action in self.actions.values():
-            actions += f"{action.name}("
-            for param in action.parameters:
-                actions += f"{param}={type(param)}, "
-            actions += ")\n"
-        return actions
+    def _make_query_dict(self, query: str) -> str:
+        query_dict = {}
+        query_dict["query"] = query
 
-    def _make_context(self) -> str:
-        """Make context from the previous messages and calls."""
-        context = "<context>\n"
-        if len(self.messages) > 0:
-            context += "<messages>\n"
-            for message in self.messages:
-                context += f"{message}\n"
-            context += "</messages>\n"
+        query_dict["available_actions"] = [
+            {
+                "name": action.name,
+                "description": action.description,
+                "params": action.parameters,
+            }
+            for action in self.actions.values()
+        ]
 
-        if len(self.call_results) > 0:
-            context += "<calls>\n"
-            for call_result in self.call_results:
-                action_call, action_result = call_result
-                action_name = action_call.name
-                context += f"<{action_name}>"
-                context += f"({action_call.params_str()}) => {action_result}"
-                context += f"</{action_name}>\n"
-            context += "</calls>\n"
+        ctx = {}
+        ctx["messages"] = self.messages
+        ctx["calls"] = self.call_results
+        query_dict["context"] = ctx
 
-        context += "</context>\n"
-        return context
+        return json.dumps(query_dict)
 
-    def _make_llm_request(self, context: str, query: str) -> ModelResponse:
-        actions = self._make_action_list()
-        query = f"<query>{query}</query>\n"
+    def _make_llm_request(self, query: str) -> ModelResponse:
+        query_dict = self._make_query_dict(query)
+        self.logger.log(query_dict)
 
         response = OpenAI.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": SYSTEM_MESSAGE},
-                {"role": "user", "content": actions},
-                {"role": "user", "content": context},
-                {"role": "user", "content": query},
+                {"role": "user", "content": query_dict},
             ],
         )
         response = response.choices[0].message.content
@@ -167,10 +113,7 @@ class Agent:
     def query(self, prompt: str) -> str:
         while self.call_depth < self.max_call_depth:
             self.logger.log(f"Call depth: {self.call_depth}")
-            context = self._make_context()
-            self.logger.log(context)
-
-            response = self._make_llm_request(context, prompt)
+            response = self._make_llm_request(prompt)
             self.logger.log(response.__repr__())
 
             for action_call in response.action_calls:
@@ -184,11 +127,17 @@ class Agent:
 
                 result = action.execute(*action_args)
 
-                self.call_results.append((action_call, result))
+                self.call_results.append(
+                    {
+                        "name": action_name,
+                        "args": action_args,
+                        "result": result,
+                    }
+                )
 
-            self.messages.append(f"User: {prompt}")
+            self.messages.append({"role": "user", "message": prompt})
             if len(response.text) > 0:
-                self.messages.append(f"You: {response.text}")
+                self.messages.append({"role": "assistant", "message": response.text})
 
             if response.completed:
                 return response.text
