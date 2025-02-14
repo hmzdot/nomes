@@ -1,13 +1,21 @@
-from action import ACTIONS
+import openai
+from prompt import SYSTEM_MESSAGE
+from action import Action, ExecuteShellCommand
+
+OpenAI = openai.OpenAI()
 
 
 class ActionCall:
-    def __init__(self, action_name: str, action_params: list[str]):
-        self.action_name = action_name
-        self.action_params = action_params
+    def __init__(self, name: str, params: list[str], args: list[str]):
+        self.name = name
+        self.params = params
+        self.args = args
+
+    def params_str(self) -> str:
+        return ",".join(f"{k}={v}" for k, v in zip(self.params, self.args))
 
     def __repr__(self):
-        return f"ActionCall(action_name={self.action_name}, action_params={self.action_params})"
+        return f"ActionCall(name={self.name}, params={self.params_str()})"
 
 
 class ModelResponse:
@@ -18,43 +26,112 @@ class ModelResponse:
         self.action_calls = action_calls
         self.completed = completed
 
+    def __repr__(self):
+        return f"ModelResponse(text={self.text}, action_calls={self.action_calls}, completed={self.completed})"
+
 
 class Session:
     messages: list[str]
     call_results: list[tuple[ActionCall, str, str]]
-    call_count: int
-    max_call_count: int
+    call_depth: int
+    max_call_depth: int
+    actions: dict[str, Action]
 
-    def __init__(self, max_call_count: int = 10):
+    def __init__(self, actions: list[Action] = [], max_call_depth: int = 10):
         self.messages = []
         self.call_results = []
-        self.call_count = 0
-        self.max_call_count = max_call_count
+        self.call_depth = 0
+        self.max_call_depth = max_call_depth
+        self.actions = {action.name: action for action in actions}
 
-    def _parse_prompt(self, prompt: str) -> ModelResponse:
-        pass
+    def _parse_response(self, prompt: str) -> ModelResponse:
+        """Extracts the text and action calls from the LLM response."""
+        # Initialize variables
+        text = []
+        action_calls = []
+        finished = False
+
+        # Split the response into lines for easier processing
+        lines = prompt.strip().split("\n")
+
+        for line in lines:
+            # Check for action calls using the format <action_name>(params)</action_name>
+            if line.strip().startswith("<") and ">" in line and "</" in line:
+                start_tag = line.index(">") + 1
+                end_tag = line.index("</")
+                action_content = line[start_tag:end_tag].strip()
+
+                # Extract action name and parameters
+                action_name = line[1 : line.index(">")].strip()
+                action = self.actions.get(action_name)
+                if action is None:
+                    print(f"Action {action_name} not found")
+                    continue
+
+                args_str = action_content[
+                    action_content.index("(") + 1 : action_content.rindex(")")
+                ]
+                args = [param.strip() for param in args_str.split(",") if param.strip()]
+
+                action_calls.append(ActionCall(action_name, action.parameters, args))
+            elif line.strip() == "<end>":
+                finished = True
+            else:
+                text.append(line)
+
+        return ModelResponse(
+            text="\n".join(text).strip(),
+            action_calls=action_calls,
+            completed=finished,
+        )
+
+    def _make_action_list(self) -> str:
+        """Make a list of actions that the LLM can call."""
+        actions = "Available actions:\n"
+        for action in self.actions.values():
+            actions += f"{action.name}("
+            for param in action.parameters:
+                actions += f"{param}={type(param)}, "
+            actions += ")\n"
+        return actions
 
     def _make_context(self) -> str:
         """Make context from the previous messages and calls."""
-        context = ""
-        context += "Previous messages:\n"
-        for message in self.messages:
-            context += f"{message}\n"
+        context = "<context>\n"
+        if len(self.messages) > 0:
+            context += "<messages>\n"
+            for message in self.messages:
+                context += f"{message}\n"
+            context += "</messages>\n"
 
-        context += "Previous calls:\n"
-        for call_result in self.call_results:
-            action_call, action_params_str, action_result = call_result
-            action_name = action_call.action_name
+        if len(self.call_results) > 0:
+            context += "<calls>\n"
+            for call_result in self.call_results:
+                action_call, action_result = call_result
+                action_name = action_call.name
+                context += f"<{action_name}>"
+                context += f"({action_call.params_str()}) => {action_result}"
+                context += f"</{action_name}>\n"
+            context += "</calls>\n"
 
-            context += f"<{action_name}>({action_params_str}) => {action_result}\n"
-
+        context += "</context>\n"
         return context
 
-    def _make_llm_request(self, _context: str, _query: str) -> ModelResponse:
-        pass
+    def _make_llm_request(self, context: str, query: str) -> ModelResponse:
+        query = f"<query>{query}</query>\n"
+
+        response = OpenAI.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": SYSTEM_MESSAGE},
+                {"role": "user", "content": context},
+                {"role": "user", "content": query},
+            ],
+        )
+        return self._parse_response(response)
 
     def query(self, prompt: str) -> str:
-        while self.call_count < self.max_call_count:
+        while self.call_depth < self.max_call_depth:
             context = self._make_context()
             response = self._make_llm_request(context, prompt)
 
@@ -65,24 +142,24 @@ class Session:
                 action_name = action_call.action_name
                 action_params = action_call.action_params
 
-                action = ACTIONS[action_name]
+                action = self.actions.get(action_name)
+                if action is None:
+                    print(f"Action {action_name} not found")
+                    continue
+
                 result = action.execute(*action_params)
 
-                action_params_str = ",".join(
-                    f"{param}={value}"
-                    for param, value in zip(action.parameters, action_params)
-                )
-                self.call_results.append((action_call, action_params_str, result))
+                self.call_results.append((action_call, result))
 
             self.messages.append(f"User: {prompt}")
             if len(response.text) > 0:
                 self.messages.append(f"You: {response.text}")
-            self.call_count += 1
-
-
-def main():
-    pass
+            self.call_depth += 1
 
 
 if __name__ == "__main__":
-    main()
+    session = Session(
+        actions=[ExecuteShellCommand()],
+        max_call_depth=1,
+    )
+    print(session.query("What is the output of the ls command?"))
