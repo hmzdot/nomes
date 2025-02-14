@@ -13,7 +13,7 @@ class Action:
 
     @abstractmethod
     def execute(self, *args, **kwargs) -> str:
-        pass
+        print(">>> Executing action", self.name)
 
 
 class ExecuteShellCommand(Action):
@@ -25,6 +25,7 @@ class ExecuteShellCommand(Action):
         )
 
     def execute(self, command: str) -> str:
+        super().execute(command)
         result = subprocess.run(command, shell=True, capture_output=True, text=True)
         return f"(Return Code: {result.returncode}) {result.stdout}"
 
