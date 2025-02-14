@@ -49,42 +49,69 @@ class Agent:
         self.actions = {action.name: action for action in actions}
         self.logger = Logger()
 
-    def _parse_response(self, prompt: str) -> ModelResponse:
-        """Extracts the text and action calls from the LLM response using regex."""
-        # Check for <end> tag and remove it
-        finished = bool(re.search(r"<end>", prompt))
-        prompt = re.sub(r"<end>", "", prompt)
+    def _parse_response(self, input_str: str) -> ModelResponse:
+        """
+        Parses a string to extract the plain text, a list of action calls, and a finished flag.
 
-        # Find and process action calls
-        action_calls = []
+        Action calls are in the format:
+            <action_name>(arg1, arg2, ...)</action_name>
 
-        def process_action(match):
+        A tag <end> indicates that the finished flag should be True.
+        """
+        actions = []
+        # Regex pattern to match <action_name>(parameters)</action_name>
+        pattern = re.compile(r"<(\w+)>\((.*?)\)</\1>", re.DOTALL)
+
+        # Find and parse all action calls.
+        for match in pattern.finditer(input_str):
             action_name = match.group(1)
-            args_str = match.group(2)
-
-            # Extract quoted arguments, handling escaped quotes
+            args_str = match.group(2).strip()
             args = []
-            pattern = r'"((?:[^"\\]|\\.)*)"'
-            for arg_match in re.finditer(pattern, args_str):
-                # De-escape the captured argument
-                arg = codecs.decode(arg_match.group(1), "unicode_escape")
-                args.append(arg)
+            if args_str:
+
+                def find_char_pos(char: str, start_pos: int) -> int:
+                    """Find the position of a character in a string, skipping escape characters."""
+                    pos = start_pos
+                    while pos < len(args_str):
+                        if args_str[pos] == "\\":
+                            pos += 2
+                        elif args_str[pos] == char:
+                            return pos
+                        pos += 1
+                    return -1
+
+                pos = 0
+                while pos < len(args_str):
+                    start_pos = find_char_pos('"', pos)
+                    end_pos = find_char_pos('"', start_pos + 1)
+                    args_str = args_str[start_pos + 1 : end_pos]
+                    args.extend([arg.strip('"') for arg in args_str.split('", "')])
+                    pos = end_pos + 1
+
+            for arg in args:
+                # De-escape the argument using codecs.decode
+                arg = codecs.decode(arg, "unicode_escape")
 
             action = self.actions.get(action_name)
-            if action:
-                action_calls.append(ActionCall(action_name, action.parameters, args))
-            return ""  # Remove the action call from the text
+            if action is None:
+                print(f"Action {action_name} not found")
+                continue
 
-        # Pattern matches <action_name>("arg1", "arg2", ...)</action_name>
-        action_pattern = r"<(\w+)>\(([^)]+)\)</\1>"
-        text = re.sub(action_pattern, process_action, prompt)
+            actions.append(ActionCall(action_name, action.parameters, args))
 
-        # Clean up any remaining whitespace/empty lines
-        text = "\n".join(line for line in text.split("\n") if line.strip())
+        # Remove all action call tags from the text.
+        text_without_actions = pattern.sub("", input_str)
+
+        # Check for the <end> tag.
+        finished = "<end>" in text_without_actions
+        text_without_actions = text_without_actions.replace("<end>", "")
+
+        # Clean up any extra whitespace.
+        text_without_actions = text_without_actions.strip()
 
         return ModelResponse(
-            text=text.strip(),
-            action_calls=action_calls,
+            text=text_without_actions,
+            action_calls=actions,
             completed=finished,
         )
 

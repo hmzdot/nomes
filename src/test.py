@@ -1,6 +1,18 @@
 from action import ExecuteShellCommand
-from main import Agent, ActionCall
+from agent import Agent, ActionCall
 from prompt import SYSTEM_MESSAGE
+
+RESPONSE_1 = """
+Sure, I'll create the file, add the code, and run it. 
+
+1. Creating the file `index.js`.
+2. Adding the code to print "Hello, world!".
+3. Running the file.
+
+Let's start with creating the file and adding the code. 
+
+<execute_shell_command>("echo 'console.log(\\"Hello, world!\\");' > index.js")</execute_shell_command>
+"""
 
 
 def test_parse_response():
@@ -28,6 +40,10 @@ def test_parse_response():
             """.strip()
         )
     )
+
+    print("Response 1")
+    parsed = Agent(actions=[ExecuteShellCommand()]).parse_input(RESPONSE_1)
+    print(parsed.action_calls[0].args)
 
 
 def test_make_context():
@@ -71,8 +87,8 @@ def test_execute_shell_command():
 
 
 if __name__ == "__main__":
-    # test_parse_response()
+    test_parse_response()
     # test_make_context()
     # test_prepare_llm_request()
-    test_execute_shell_command()
+    # test_execute_shell_command()
     print("OK")

@@ -12,8 +12,8 @@ class Action:
         return f"{self.name}: {self.description}"
 
     @abstractmethod
-    def execute(self, *args, **kwargs) -> str:
-        print(">>> Executing action", self.name)
+    def execute(self, *args) -> str:
+        print(f">>> {self.name}({args})")
 
 
 class ExecuteShellCommand(Action):
