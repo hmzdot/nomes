@@ -1,38 +1,22 @@
-# Use the official Ubuntu image as a base
-FROM ubuntu:latest
+# Use lightweight Alpine image
+FROM alpine:latest
 
-# Set environment variables to prevent interactive prompts during package installation
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Update package list and install required dependencies
-RUN apt-get update && apt-get install -y \
-    curl \
-    ca-certificates \
-    gnupg \
-    software-properties-common \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Node.js and npm
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y nodejs && \
-    npm install -g npm@latest
-
-# Install Python and pip
-RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
-    python3-venv \
-    && rm -rf /var/lib/apt/lists/*
-
-# Set default shell to bash
-SHELL ["/bin/bash", "-c"]
-
-# Verify installations
-RUN node -v && npm -v && python3 --version && pip3 --version
+# Install Node.js, Python, and dependencies
+RUN apk add --no-cache python3 py3-pip nodejs npm
 
 # Set working directory
 WORKDIR /app
 
-# Default command (can be overridden)
-CMD ["bash"]
+# Copy agent code
+COPY . .
+
+RUN python3 -m venv venv
+
+RUN venv/bin/python3 -m pip install -e .
+
+# Expose port 6060
+EXPOSE 6060
+
+# Run the AI agent
+CMD ["venv/bin/python3", "src/main.py"]
 
